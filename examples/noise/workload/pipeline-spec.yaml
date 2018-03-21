@@ -1,0 +1,6 @@
+noise:
+  pipeline:
+  - run: noise
+  - run: dump.to_path
+    parameters:
+      out-path: data
