@@ -1,7 +1,8 @@
 # dppctl-pipelines
 
-[Kubernetes Helm](https://helm.sh/) chart that installs the dppctl pipelines runner and related infrastructure components.
+Part of [dppctl - serverless data pipelines framework](https://github.com/OriHoch/dppctl/blob/master/README.md#dppctl)
 
+Provides the core functionality of running the pipelines and managing related infra
 
 ## Prerequisites
 
