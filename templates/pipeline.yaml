@@ -1,0 +1,93 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pipeline-{{ .Values.id }}
+spec:
+  template:
+    metadata:
+      labels:
+        dppctl-pipeline: {{ .Values.id }}
+    spec:
+      containers:
+      - name: pipeline
+        image: {{ .Values.image | default "frictionlessdata/datapackage-pipelines" | quote }}
+        command:
+        - sh
+        - "-c"
+        - |
+          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} waiting for sync
+          while ! [ -e /state/synced ]; do
+            sleep {{ .Values.waitForSyncSeconds | default ".1" }}
+            {{ if .Values.enableProgress }}echo .{{ end }}
+          done
+          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} done
+          cd /workload/{{ .Values.workloadPath | default "" }} &&\
+          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} running pipelines
+          dpp run `cat /state/dpp_run_params`
+          RES=$?
+          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} done with exit code $RES
+          touch /state/pipelines_complete
+          {{ if .Values.postPipelinesSleepSeconds }}
+            {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} sleeping {{ .Values.postPipelinesSleepSeconds }} seconds
+            sleep {{ .Values.postPipelinesSleepSeconds }}
+          {{ end }}
+          exit $RES
+        resources: {{ .Values.resources }}
+        volumeMounts:
+        - name: workload
+          mountPath: /workload
+        - name: state
+          mountPath: /state
+      - name: sync
+        image: google/cloud-sdk:alpine
+        command:
+        - bash
+        - "-c"
+        - |
+          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} waiting for workload
+          while ! ( curl -L {{ .Values.workload | quote }} > workload.zip &&\
+                    unzip -d workload workload.zip &&\
+                    echo {{ .Values.dppRunParams | quote }} > /state/dpp_run_params ) {{ if .Values.enableDebug }}{{ else }}> /dev/null 2>&1{{ end }}
+          do
+            sleep {{ .Values.waitForWorkloadSeconds | default ".1" }}
+            {{ if .Values.enableProgress }}echo{{ else }}true{{ end }} .
+            ( rm -rf /workload/*
+              rm -f workload.zip /state/dpp_run_params ) >/dev/null 2>&1
+          done
+          touch /state/synced
+          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} done
+          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} waiting for pipelines
+          while ! [ -e /state/pipelines_complete ]; do
+            sleep {{ .Values.waitForPipelineSeconds | default ".1" }}
+            {{ if .Values.enableProgress }}echo{{ else }}true{{ end }} .
+          done
+          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} done
+          {{ if .Values.cloudSdkCoreProject }}
+          if [ -e /workload/data ] && [ -e /data-syncer-secrets/secret.json ]; then
+            {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} syncing data directory
+            gcloud auth activate-service-account --key-file /data-syncer-secrets/secret.json
+            gsutil cp {{ .Values.gsutilCpArgs | default "-a public-read" }} -R /workload/data gs://{{ .Values.cloudSdkCoreProject }}-dppctl-pipelines/{{ .Values.id }}/
+          fi
+          {{ end }}
+          exit 0
+        resources: {{ .Values.syncResources }}
+        volumeMounts:
+        - name: workload
+          mountPath: /workload
+        - name: state
+          mountPath: /state
+        {{ if .Values.dataSyncerSecret }}
+        - name: data-syncer-secrets
+          mountPath: /data-syncer-secrets
+        {{ end }}
+      volumes:
+      - name: workload
+        emptyDir: {}
+      - name: state
+        emptyDir: {}
+      {{ if .Values.dataSyncerSecret }}
+      - name: data-syncer-secrets
+        secret:
+          secretName: {{ .Values.dataSyncerSecret }}
+      {{ end }}
+      restartPolicy: Never
