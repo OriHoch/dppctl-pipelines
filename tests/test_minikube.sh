@@ -4,7 +4,7 @@
 echo ID=$ID
 
 INSTALL_ARGS=". -n dppctl-pipelines-$ID --set id=$ID \
-              --set workload=minio --set dataSyncer=minio \
+              --set workload=minio --set dataSyncer=minio --set enableMinio=1 \
               --set dppRunParams=./noise --set postPipelinesSleepSeconds=600 \
               --set enableInfo=1"
 

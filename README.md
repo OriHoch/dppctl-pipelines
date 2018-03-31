@@ -145,69 +145,38 @@ echo https://storage.googleapis.com/${CLOUDSDK_CORE_PROJECT}-dppctl-pipelines/${
 
 ### Workload and data storage locally using minio
 
-Run the pipeline and track the minio logs
-
-```
-ID=$(python -c 'import re;import uuid;print(re.sub("-","",str(uuid.uuid4())))') &&\
-helm install . -n dppctl-pipelines-$ID --set id=$ID \
-               --set workload=minio --set dataSyncer=minio \
-               --set dppRunParams="--verbose ./noise" --set postPipelinesSleepSeconds=3600 \
-               --set enableInfo=1 &&\
-sleep 1 &&\
-while ! kubectl logs pipeline-$ID -c minio -f; do sleep 1; done
-```
-
-check the sync log - it should be waiting for minio, then wait for workload
-
-```
-kubectl logs pipeline-$ID -c sync -f
-```
-
 Download [minio client](https://github.com/minio/mc/blob/master/README.md#minio-client-quickstart-guide)
 
 ```
 curl https://dl.minio.io/client/mc/release/linux-amd64/mc > ./mc && chmod +x ./mc
 ```
 
-Start a port forward to the kubernetes minio
+Run the pipeline, sync should wait for the workload
 
 ```
-kubectl port-forward pipeline-$ID 9000 & MINIO_PORT_FORWARD_PID=$!
+ID=$(python -c 'import re;import uuid;print(re.sub("-","",str(uuid.uuid4())))') &&\
+helm install . -n dppctl-pipelines-$ID --set id=$ID \
+               --set workload=minio --set dataSyncer=minio --set enableMinio=1 \
+               --set dppRunParams="--verbose ./noise" --set postPipelinesSleepSeconds=3600 \
+               --set enableInfo=1 &&\
+sleep 1 &&\
+while ! kubectl logs pipeline-$ID -c sync -f; do sleep 1; done &&\
+sleep 2
 ```
 
-add the minio dppctl configuration
+Upload the workload to minio
 
 ```
-./mc config host add dppctl http://localhost:9000 admin 12345678
-```
-
-Wait for pipeline sync signal that it's ready to get the workload
-
-```
-while ! ./mc ls dppctl/workload/.__dppctl_ready_for_workload__; do sleep 1; done
-```
-
-Copy the workload to the storage and mark as ready
-
-```
+kubectl port-forward pipeline-$ID 9000 & MINIO_PORT_FORWARD_PID=$!;
+./mc config host add dppctl http://localhost:9000 admin 12345678 &&\
+while ! ./mc ls dppctl/workload/.__dppctl_ready_for_workload__; do sleep 1; done &&\
 ./mc cp -q examples/noise/workload/pipeline-spec.yaml dppctl/workload/ &&\
 ./mc cp -q examples/noise/workload/noise.py dppctl/workload/ &&\
-echo "" | ./mc pipe dppctl/workload/.__dppctl_workload_ready__
-```
-
-Check the pipeline logs - it should run
-
-```
+echo "" | ./mc pipe dppctl/workload/.__dppctl_workload_ready__ &&\
 kubectl logs pipeline-$ID -c pipeline -f
 ```
 
-Check the sync logs - it should sync the data to minio
-
-```
-kubectl logs pipeline-$ID -c sync -f
-```
-
-Data should be available in minio
+When pipeline is done, data should be available in minio
 
 ```
 ./mc ls dppctl/workload/data

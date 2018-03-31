@@ -33,6 +33,8 @@ spec:
       value: "12345678"
     - name: KEEPALIVE_SECONDS
       value: {{ .Values.keepaliveSeconds | quote }}
+    - name: DATA_SYNCER
+      value: {{ .Values.dataSyncer | default "" | quote }}
     command:
     - bash
     - "-c"
@@ -41,7 +43,7 @@ spec:
       if [ "${WORKLOAD}" == "minio" ]; then
         info waiting for minio
         while ! ( mc config host add dppctl http://localhost:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}" &&\
-                  mc mb dppctl/workload) > /dev/null 2>&1; do
+                  mc mb dppctl/workload ) > /dev/null 2>&1; do
           sleep "${WAIT_FOR_MINIO_SECONDS}"; progress .;
         done; echo done, waiting for the workload
         echo "" | mc pipe dppctl/workload/.__dppctl_ready_for_workload__
@@ -72,10 +74,13 @@ spec:
           info syncing data directory to google cloud storage projcet ${CLOUDSDK_CORE_PROJECT}
           gcloud auth activate-service-account --key-file /data-syncer-secrets/secret.json
           gsutil cp $GSUTIL_CP_ARGS -R /workload/data gs://${CLOUDSDK_CORE_PROJECT}-dppctl-pipelines/${PIPELINE_ID}/
-      elif [ -e /workload/data ] && [ "${WORKLOAD}" == "minio" ]; then
-          mc config host add dppctl http://localhost:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-          mc cp --recursive /workload/data dppctl/workload/ &&\
-          echo "" | mc pipe dppctl/workload/.__dppctl_data_ready__
+      elif [ -e /workload/data ] && [ "${DATA_SYNCER}" == "minio" ]; then
+          info syncing data to minio
+          while ! ( mc config host add dppctl http://localhost:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}" &&\
+                    mc cp --recursive /workload/data dppctl/workload/ &&\
+                    echo "" | mc pipe dppctl/workload/.__dppctl_data_ready__ ) > /dev/null 2>&1; do
+            sleep "${WAIT_FOR_MINIO_SECONDS}"; progress .;
+          done; echo done
       fi
       echo keeping sync alive for $KEEPALIVE_SECONDS seconds
       sleep $KEEPALIVE_SECONDS
@@ -117,7 +122,7 @@ spec:
       mountPath: /workload
     - name: state
       mountPath: /state
-  {{ if eq .Values.workload "minio" }}
+  {{ if .Values.enableMinio }}
   - name: minio
     image: minio/minio
     ports:
