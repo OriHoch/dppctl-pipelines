@@ -1,93 +1,140 @@
-apiVersion: batch/v1
-kind: Job
+apiVersion: v1
+kind: Pod
 metadata:
   name: pipeline-{{ .Values.id }}
 spec:
-  template:
-    metadata:
-      labels:
-        dppctl-pipeline: {{ .Values.id }}
-    spec:
-      containers:
-      - name: pipeline
-        image: {{ .Values.image | default "frictionlessdata/datapackage-pipelines" | quote }}
-        command:
-        - sh
-        - "-c"
-        - |
-          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} waiting for sync
-          while ! [ -e /state/synced ]; do
-            sleep {{ .Values.waitForSyncSeconds | default ".1" }}
-            {{ if .Values.enableProgress }}echo .{{ end }}
-          done
-          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} done
-          cd /workload/{{ .Values.workloadPath | default "" }} &&\
-          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} running pipelines
-          dpp run `cat /state/dpp_run_params`
-          RES=$?
-          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} done with exit code $RES
-          touch /state/pipelines_complete
-          {{ if .Values.postPipelinesSleepSeconds }}
-            {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} sleeping {{ .Values.postPipelinesSleepSeconds }} seconds
-            sleep {{ .Values.postPipelinesSleepSeconds }}
-          {{ end }}
-          exit $RES
-        resources: {{ .Values.resources }}
-        volumeMounts:
-        - name: workload
-          mountPath: /workload
-        - name: state
-          mountPath: /state
-      - name: sync
-        image: google/cloud-sdk:alpine
-        command:
-        - bash
-        - "-c"
-        - |
-          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} waiting for workload
-          while ! ( curl -L {{ .Values.workload | quote }} > workload.zip &&\
-                    unzip -d workload workload.zip &&\
-                    echo {{ .Values.dppRunParams | quote }} > /state/dpp_run_params ) {{ if .Values.enableDebug }}{{ else }}> /dev/null 2>&1{{ end }}
-          do
-            sleep {{ .Values.waitForWorkloadSeconds | default ".1" }}
-            {{ if .Values.enableProgress }}echo{{ else }}true{{ end }} .
-            ( rm -rf /workload/*
-              rm -f workload.zip /state/dpp_run_params ) >/dev/null 2>&1
-          done
-          touch /state/synced
-          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} done
-          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} waiting for pipelines
-          while ! [ -e /state/pipelines_complete ]; do
-            sleep {{ .Values.waitForPipelineSeconds | default ".1" }}
-            {{ if .Values.enableProgress }}echo{{ else }}true{{ end }} .
-          done
-          {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} done
-          {{ if .Values.cloudSdkCoreProject }}
-          if [ -e /workload/data ] && [ -e /data-syncer-secrets/secret.json ]; then
-            {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} syncing data directory
-            gcloud auth activate-service-account --key-file /data-syncer-secrets/secret.json
-            gsutil cp {{ .Values.gsutilCpArgs | default "-a public-read" }} -R /workload/data gs://{{ .Values.cloudSdkCoreProject }}-dppctl-pipelines/{{ .Values.id }}/
-          fi
-          {{ end }}
-          exit 0
-        resources: {{ .Values.syncResources }}
-        volumeMounts:
-        - name: workload
-          mountPath: /workload
-        - name: state
-          mountPath: /state
-        {{ if .Values.dataSyncerSecret }}
-        - name: data-syncer-secrets
-          mountPath: /data-syncer-secrets
-        {{ end }}
-      volumes:
-      - name: workload
-        emptyDir: {}
-      - name: state
-        emptyDir: {}
-      {{ if .Values.dataSyncerSecret }}
-      - name: data-syncer-secrets
-        secret:
-          secretName: {{ .Values.dataSyncerSecret }}
-      {{ end }}
-      restartPolicy: Never
+  containers:
+  - name: sync
+    image: {{ .Values.image | default "orihoch/dppctl-pipelines-sync:v0.0.0b" | quote }}
+    env:
+    - name: ENABLE_INFO
+      value: "{{ if .Values.enableInfo }}1{{ end }}"
+    - name: ENABLE_PROGRESS
+      value: "{{ if .Values.enableProgress }}1{{ end }}"
+    - name: WORKLOAD
+      value: {{ .Values.workload | quote }}
+    - name: WAIT_FOR_PIPELINE_SECONDS
+      value: {{ .Values.waitForPipelineSeconds | default ".1" | quote }}
+    - name: WAIT_FOR_WORKLOAD_SECONDS
+      value: {{ .Values.waitForWorkloadSeconds | default ".1" | quote }}
+    - name: WAIT_FOR_MINIO_SECONDS
+      value: {{ .Values.waitForMinioSeconds | default ".1" | quote }}
+    - name: DPP_RUN_PARAMS
+      value: {{ .Values.dppRunParams | quote }}
+    - name: CLOUDSDK_CORE_PROJECT
+      value: {{ .Values.cloudSdkCoreProject | default "" | quote }}
+    - name: GSUTIL_CP_ARGS
+      value: {{ .Values.gsutilCpArgs | default "-a public-read" | quote }}
+    - name: PIPELINE_ID
+      value: {{ .Values.id | quote }}
+    - name: MINIO_ACCESS_KEY
+      value: "admin"
+    - name: MINIO_SECRET_KEY
+      value: "12345678"
+    - name: KEEPALIVE_SECONDS
+      value: {{ .Values.keepaliveSeconds | quote }}
+    command:
+    - bash
+    - "-c"
+    - |
+      source /functions.bash
+      if [ "${WORKLOAD}" == "minio" ]; then
+        info waiting for minio
+        while ! ( mc config host add dppctl http://localhost:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}" &&\
+                  mc mb dppctl/workload) > /dev/null 2>&1; do
+          sleep "${WAIT_FOR_MINIO_SECONDS}"; progress .;
+        done; echo done, waiting for the workload
+        echo "" | mc pipe dppctl/workload/.__dppctl_ready_for_workload__
+        while ! ( mc ls dppctl/workload/.__dppctl_workload_ready__ &&\
+                  mc cp --recursive dppctl/workload/ /workload/ ) > /dev/null 2>&1; do
+          sleep "${WAIT_FOR_WORKLOAD_SECONDS}"; progress .;
+        done; echo done
+      else
+        info waiting for workload
+        while ! ( curl -L "${WORKLOAD}" > workload.zip &&\
+                unzip -d workload workload.zip ) > /dev/null 2>&1
+        do
+            sleep "${WAIT_FOR_WORKLOAD_SECONDS}"
+            progress .
+            ( rm -rf /workload/*; rm -f workload.zip ) >/dev/null 2>&1
+        done
+      fi
+      echo $DPP_RUN_PARAMS > /state/dpp_run_params
+      touch /state/synced
+      info done
+      info waiting for pipelines
+      while ! [ -e /state/pipelines_complete ]; do
+          sleep "${WAIT_FOR_PIPELINE_SECONDS}"
+          progress .
+      done
+      info done
+      if [ "${CLOUDSDK_CORE_PROJECT}" != "" ] && [ -e /workload/data ] && [ -e /data-syncer-secrets/secret.json ]; then
+          info syncing data directory to google cloud storage projcet ${CLOUDSDK_CORE_PROJECT}
+          gcloud auth activate-service-account --key-file /data-syncer-secrets/secret.json
+          gsutil cp $GSUTIL_CP_ARGS -R /workload/data gs://${CLOUDSDK_CORE_PROJECT}-dppctl-pipelines/${PIPELINE_ID}/
+      fi
+      echo keeping sync alive for $KEEPALIVE_SECONDS seconds
+      sleep $KEEPALIVE_SECONDS
+      exit 0
+    resources: {{ .Values.syncResources }}
+    volumeMounts:
+    - name: workload
+      mountPath: /workload
+    - name: state
+      mountPath: /state
+    {{ if .Values.dataSyncerSecret }}
+    - name: data-syncer-secrets
+      mountPath: /data-syncer-secrets
+    {{ end }}
+  - name: pipeline
+    image: {{ .Values.image | default "frictionlessdata/datapackage-pipelines" | quote }}
+    command:
+    - sh
+    - "-c"
+    - |
+      {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} waiting for sync
+      while ! [ -e /state/synced ]; do
+        sleep {{ .Values.waitForSyncSeconds | default ".1" }}
+        {{ if .Values.enableProgress }}echo .{{ end }}
+      done
+      {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} done
+      cd /workload/{{ .Values.workloadPath | default "" }} &&\
+      {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} running pipelines
+      dpp run `cat /state/dpp_run_params`
+      RES=$?
+      {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} done with exit code $RES
+      touch /state/pipelines_complete
+      echo keeping pipelines alive for {{ .Values.keepaliveSeconds }} seconds
+      sleep {{ .Values.keepaliveSeconds }}
+      exit $RES
+    resources: {{ .Values.resources }}
+    volumeMounts:
+    - name: workload
+      mountPath: /workload
+    - name: state
+      mountPath: /state
+  {{ if eq .Values.workload "minio" }}
+  - name: minio
+    image: minio/minio
+    ports:
+    - containerPort: 9000
+    args:
+    - server
+    - "/data"
+    env:
+    - name: MINIO_ACCESS_KEY
+      value: "admin"
+    - name: MINIO_SECRET_KEY
+      value: "12345678"
+  {{ end }}
+  volumes:
+  - name: workload
+    emptyDir: {}
+  - name: state
+    emptyDir: {}
+  {{ if .Values.dataSyncerSecret }}
+  - name: data-syncer-secrets
+    secret:
+      secretName: {{ .Values.dataSyncerSecret }}
+  {{ end }}
+  restartPolicy: Never

@@ -1,0 +1,18 @@
+[[source]]
+
+verify_ssl = true
+name = "pypi"
+url = "https://pypi.python.org/simple"
+
+
+[dev-packages]
+
+
+
+[packages]
+datapackage-pipelines = {extras = ["develop","speedup"]}
+
+
+[requires]
+
+python_version = "3.6"

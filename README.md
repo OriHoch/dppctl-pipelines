@@ -14,12 +14,16 @@ Following methods are suggested for quick startup, but you can use any method to
 * Install Minikube according to the instructions in latest [release notes](https://github.com/kubernetes/minikube/releases)
 * Create the local minikube cluster
   * `minikube start`
+  * If you have problems, try to downgrade the kubernetes version
+    * e.g. `minikube start --kubernetes-version v1.9.0`
 * Verify you are connected to the cluster
   * `kubectl get nodes`
+* Install [helm client](https://docs.helm.sh/using_helm/#installing-the-helm-client)
 * Initialize helm
   * `helm init --history-max 1 --upgrade --wait`
-* Verify that it works
-  * `helm ls`
+* Verify helm version on both client and server
+  * `helm version`
+  * should be v1.8.2 or later
 
 ### Setting up a cluster on Google Kubernetes Engine
 
@@ -69,13 +73,14 @@ helm install . -n dppctl-pipelines-$ID \
                --set dppRunParams="--verbose ./noise" \
                --set postPipelinesSleepSeconds=3600 &&\
 sleep 1 &&\
-POD=$(kubectl get pods -l dppctl-pipeline=$ID -o go-template='{{(index .items 0).metadata.name}}') &&\
-while ! kubectl logs $POD -c pipeline -f; do sleep 1; done
+while ! kubectl logs pipeline-$ID -c pipeline -f; do sleep 1; done
 ```
 
 It ends with following the pipeline logs, Press CTRL+C to exit
 
-To cleanup, delete all helm releases with `helm ls --short | xargs -L1 helm delete --purge`
+### Cleanup
+
+To cleanup, delete all pods with `kubectl delete pod --all`
 
 ### Delayed workload loading + sync to google storage
 
@@ -114,8 +119,7 @@ helm install . -n dppctl-pipelines-$ID --set id=$ID \
                --set dppRunParams="--verbose ./noise" --set postPipelinesSleepSeconds=3600 \
                --set enableInfo=1 --set dataSyncerSecret=data-syncer --set cloudSdkCoreProject=$CLOUDSDK_CORE_PROJECT &&\
 sleep 1 &&\
-POD=$(kubectl get pods -l dppctl-pipeline=$ID -o go-template='{{(index .items 0).metadata.name}}') &&\
-while ! kubectl logs $POD -c sync -f; do sleep 1; done
+while ! kubectl logs pipeline-$ID -c sync -f; do sleep 1; done
 ```
 
 Load the workload to google storage
@@ -128,12 +132,72 @@ gsutil cp -a public-read examples/noise/workload/workload.zip gs://${CLOUDSDK_CO
 Check the logs
 
 ```
-kubectl logs $POD -c sync
-kubectl logs $POD -c pipeline -f
+kubectl logs pipeline-$ID -c sync
+kubectl logs pipeline-$ID -c pipeline -f
 ```
 
 Data is available publically by default
 
 ```
 echo https://storage.googleapis.com/${CLOUDSDK_CORE_PROJECT}-dppctl-pipelines/${ID}/data/datapackage.json
+```
+
+### Workload and data storage locally using minio
+
+Run the pipeline and track the minio logs
+
+```
+ID=$(python -c 'import re;import uuid;print(re.sub("-","",str(uuid.uuid4())))') &&\
+helm install . -n dppctl-pipelines-$ID --set id=$ID \
+               --set workload=minio --set dataSyncer=minio \
+               --set dppRunParams="--verbose ./noise" --set postPipelinesSleepSeconds=3600 \
+               --set enableInfo=1 &&\
+sleep 1 &&\
+while ! kubectl logs pipeline-$ID -c minio -f; do sleep 1; done
+```
+
+check the sync log - it should be waiting for minio, then wait for workload
+
+```
+kubectl logs pipeline-$ID -c sync -f
+```
+
+Download [minio client](https://github.com/minio/mc/blob/master/README.md#minio-client-quickstart-guide)
+
+```
+curl https://dl.minio.io/client/mc/release/linux-amd64/mc > ./mc && chmod +x ./mc
+```
+
+Start a port forward to the kubernetes minio
+
+```
+kubectl port-forward pipeline-$ID 9000
+```
+
+Keep it running and run in a new terminal -
+
+add the minio dppctl configuration
+
+```
+./mc config host add dppctl http://localhost:9000 admin 12345678
+```
+
+Wait for pipeline sync signal that it's ready to get the workload
+
+```
+while ! ./mc ls dppctl/workload/.__dppctl_ready_for_workload__; do sleep 1; done
+```
+
+Copy the workload to the storage and mark as ready
+
+```
+./mc cp -q examples/noise/workload/pipeline-spec.yaml dppctl/workload/ &&\
+./mc cp -q examples/noise/workload/noise.py dppctl/workload/ &&\
+echo "" | ./mc pipe dppctl/workload/.__dppctl_workload_ready__
+```
+
+Check the pipeline logs - it should run
+
+```
+kubectl logs pipeline-$ID -c pipeline -f
 ```

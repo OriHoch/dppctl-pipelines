@@ -1,4 +1,6 @@
+workload: ""
 resources: >
   {"requests": {"cpu": "200m", "memory": "200Mi"}, "limits": {"cpu": "400m", "memory": "700Mi"}}
 syncResources: >
   {"requests": {"cpu": "200m", "memory": "100Mi"}, "limits": {"cpu": "400m", "memory": "300Mi"}}
+keepaliveSeconds: 3600
