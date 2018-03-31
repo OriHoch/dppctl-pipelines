@@ -25,6 +25,8 @@ Following methods are suggested for quick startup, but you can use any method to
 * Verify helm version on both client and server
   * `helm version`
   * should be v1.8.2 or later
+* Delete all existing pods to cleanup previous pipelines
+  * `kubectl delete pod --all`
 
 ### Setting up a cluster on Google Kubernetes Engine
 
@@ -45,8 +47,10 @@ Following methods are suggested for quick startup, but you can use any method to
   * `curl https://raw.githubusercontent.com/kubernetes/helm/master/scripts/get | bash`
 * Install the Helm server-side component - Tiller
   * `kubectl create -f tiller-rbac-config.yaml`
-  * `helm init --service-account tiller --upgrade --force-upgrade --history-max 1 --wait`
+  * `helm init --service-account tiller --upgrade --history-max 1 --wait`
   * It's important to set history-max because dppctl relies on intalling new releases dynamically
+* Delete all existing pods to cleanup previous pipelines
+  * `kubectl delete pod --all`
 
 
 ## Running pipelines
@@ -78,10 +82,6 @@ while ! kubectl logs pipeline-$ID -c pipeline -f; do sleep 1; done
 ```
 
 It ends with following the pipeline logs, Press CTRL+C to exit
-
-### Cleanup
-
-To cleanup, delete all pods with `kubectl delete pod --all`
 
 ### Delayed workload loading + sync to google storage
 
@@ -172,10 +172,8 @@ curl https://dl.minio.io/client/mc/release/linux-amd64/mc > ./mc && chmod +x ./m
 Start a port forward to the kubernetes minio
 
 ```
-kubectl port-forward pipeline-$ID 9000
+kubectl port-forward pipeline-$ID 9000 & MINIO_PORT_FORWARD_PID=$!
 ```
-
-Keep it running and run in a new terminal -
 
 add the minio dppctl configuration
 
@@ -201,4 +199,22 @@ Check the pipeline logs - it should run
 
 ```
 kubectl logs pipeline-$ID -c pipeline -f
+```
+
+Check the sync logs - it should sync the data to minio
+
+```
+kubectl logs pipeline-$ID -c sync -f
+```
+
+Data should be available in minio
+
+```
+./mc ls dppctl/workload/data
+```
+
+Kill the port forward
+
+```
+kill $MINIO_PORT_FORWARD_PID
 ```
