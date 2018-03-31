@@ -23,13 +23,13 @@ sleep 1
 kubectl port-forward pipeline-$ID 9000 &
 PID=$!
 
-./mc config host add dppctl http://localhost:9000 admin 12345678
+sleep 2
 
-while ! ./mc ls dppctl/workload/.__dppctl_ready_for_workload__; do sleep 1; done
-
-! ( ./mc cp -q examples/noise/workload/pipeline-spec.yaml dppctl/workload/ &&\
-    ./mc cp -q examples/noise/workload/noise.py dppctl/workload/ &&\
-    echo "" | ./mc pipe dppctl/workload/.__dppctl_workload_ready__ ) && echo failed to copy the workload && exit 1
+while ! ( ./mc config host add dppctl http://localhost:9000 admin 12345678 &&\
+          ./mc ls dppctl/workload/.__dppctl_ready_for_workload__ &&\
+          ./mc cp -q examples/noise/workload/pipeline-spec.yaml dppctl/workload/ &&\
+          ./mc cp -q examples/noise/workload/noise.py dppctl/workload/ &&\
+          echo "" | ./mc pipe dppctl/workload/.__dppctl_workload_ready__ ); do sleep 2; done
 
 sleep 2
 
