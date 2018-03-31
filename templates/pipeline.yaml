@@ -72,6 +72,10 @@ spec:
           info syncing data directory to google cloud storage projcet ${CLOUDSDK_CORE_PROJECT}
           gcloud auth activate-service-account --key-file /data-syncer-secrets/secret.json
           gsutil cp $GSUTIL_CP_ARGS -R /workload/data gs://${CLOUDSDK_CORE_PROJECT}-dppctl-pipelines/${PIPELINE_ID}/
+      elif [ -e /workload/data ] && [ "${WORKLOAD}" == "minio" ]; then
+          mc config host add dppctl http://localhost:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+          mc cp --recursive /workload/data dppctl/workload/ &&\
+          echo "" | mc pipe dppctl/workload/.__dppctl_data_ready__
       fi
       echo keeping sync alive for $KEEPALIVE_SECONDS seconds
       sleep $KEEPALIVE_SECONDS
