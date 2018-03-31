@@ -1,5 +1,7 @@
 # dppctl-pipelines
 
+[![Build Status](https://travis-ci.org/OriHoch/dppctl-pipelines.svg?branch=master)](https://travis-ci.org/OriHoch/dppctl-pipelines)
+
 Part of [dppctl - serverless data pipelines framework](https://github.com/OriHoch/dppctl/blob/master/README.md#dppctl)
 
 Provides the core functionality of running the pipelines and managing related infra
