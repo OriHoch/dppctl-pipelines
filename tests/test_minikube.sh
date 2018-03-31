@@ -31,13 +31,21 @@ while ! ./mc ls dppctl/workload/.__dppctl_ready_for_workload__; do sleep 1; done
     ./mc cp -q examples/noise/workload/noise.py dppctl/workload/ &&\
     echo "" | ./mc pipe dppctl/workload/.__dppctl_workload_ready__ ) && echo failed to copy the workload && exit 1
 
-kill $PID
-
 sleep 2
 
 while ! kubectl logs pipeline-$ID -c pipeline | tee -a /dev/stderr | grep "done with exit code 0"; do
     sleep 2
 done
+
+echo waiting for data
+while ! ./mc ls dppctl/workload/.__dppctl_data_ready__; do sleep 1; done
+
+! ( ./mc ls dppctl/workload/data/datapackage.json &&\
+    ./mc ls dppctl/workload/data/noise.csv ) && echo data is missing && exit 1
+
+kill $PID
+
+sleep 2
 
 ! kubectl delete pod pipeline-$ID && echo failed to delete pod && exit 1
 
