@@ -70,19 +70,30 @@ spec:
           progress .
       done
       info done
-      if [ "${CLOUDSDK_CORE_PROJECT}" != "" ] && [ -e /workload/data ] && [ -e /data-syncer-secrets/secret.json ]; then
-          info syncing data directory to google cloud storage projcet ${CLOUDSDK_CORE_PROJECT}
-          gcloud auth activate-service-account --key-file /data-syncer-secrets/secret.json
-          gsutil cp $GSUTIL_CP_ARGS -R /workload/data gs://${CLOUDSDK_CORE_PROJECT}-dppctl-pipelines/${PIPELINE_ID}/
+      if [ "${CLOUDSDK_CORE_PROJECT}" != "" ] && [ -e /data-syncer-secrets/secret.json ]; then
+          info syncing data to google cloud storage projcet ${CLOUDSDK_CORE_PROJECT}
+          while ! ( gcloud auth activate-service-account --key-file /data-syncer-secrets/secret.json &&\
+                    if [ -e /workload/data ]; then
+                      info detected data directory, syncing to "gs://${CLOUDSDK_CORE_PROJECT}-dppctl-pipelines/${PIPELINE_ID}/data/"
+                      gsutil cp $GSUTIL_CP_ARGS -R /workload/data gs://${CLOUDSDK_CORE_PROJECT}-dppctl-pipelines/${PIPELINE_ID}/
+                    fi &&\
+                    touch .__dppctl_data_ready__ &&\
+                    gsutil cp $GSUTIL_CP_ARGS \
+                              /workload/data/.__dppctl_data_ready__ \
+                              gs://${CLOUDSDK_CORE_PROJECT}-dppctl-pipelines/${PIPELINE_ID}/
+                  ) > /dev/null 2>&1
+          do sleep "${WAIT_FOR_PIPELINE_SECONDS}"; progress .; done; info done
       elif [ -e /workload/data ] && [ "${DATA_SYNCER}" == "minio" ]; then
           info syncing data to minio
           while ! ( mc config host add dppctl http://localhost:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}" &&\
-                    mc cp --recursive /workload/data dppctl/workload/ &&\
-                    echo "" | mc pipe dppctl/workload/.__dppctl_data_ready__ ) > /dev/null 2>&1; do
-            sleep "${WAIT_FOR_MINIO_SECONDS}"; progress .;
-          done; echo done
+                    if [ -e /workload/data ]; then
+                      info detected data directory, syncing to dppctl/workload/data/
+                      mc cp --recursive /workload/data dppctl/workload/
+                    fi &&\
+                    echo "" | mc pipe dppctl/workload/.__dppctl_data_ready__
+                  ) > /dev/null 2>&1
+          do sleep "${WAIT_FOR_PIPELINE_SECONDS}"; progress .; done; info done
       fi
-      echo keeping sync alive for $KEEPALIVE_SECONDS seconds
       sleep $KEEPALIVE_SECONDS
       exit 0
     resources: {{ .Values.syncResources }}
@@ -113,7 +124,6 @@ spec:
       RES=$?
       {{ if .Values.enableInfo }}echo{{ else }}true{{ end }} done with exit code $RES
       touch /state/pipelines_complete
-      echo keeping pipelines alive for {{ .Values.keepaliveSeconds }} seconds
       sleep {{ .Values.keepaliveSeconds }}
       exit $RES
     resources: {{ .Values.resources }}

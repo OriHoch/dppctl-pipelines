@@ -78,7 +78,7 @@ helm install . -n dppctl-pipelines-$ID \
                --set workload=https://github.com/OriHoch/dppctl-pipelines/archive/master.zip \
                --set workloadPath=dppctl-pipelines-master/examples/noise/workload \
                --set dppRunParams="--verbose ./noise" \
-               --set postPipelinesSleepSeconds=3600 &&\
+               --set postPipelinesSleepSeconds=3600 --set enableInfo=1 &&\
 sleep 1 &&\
 while ! kubectl logs pipeline-$ID -c pipeline -f; do sleep 1; done
 ```
